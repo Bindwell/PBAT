@@ -86,8 +86,7 @@ class ModelConfig:
 
 def calculate_mean_scale():
     data_path = os.path.join(os.getcwd(), "data/Protein-Protein-Binding-Affinity-Data", "Data.csv")
-
-    df = pd.read_csv(data_path)
+    df = pd.read_csv(data_path)[0:100]
     affinities = df['pkd']
     mean = affinities.mean()
     scale = affinities.std()
@@ -202,6 +201,8 @@ class ProteinEmbeddingCache:
         self.cache_dir = Path(cache_dir) if cache_dir else None
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
+        truth_value = self.load(os.path.join(cache_dir, 'caches.pt')) # loading cache if it is there, so we can just upload
+        # the caches when we start from the previous training run
 
     def get(self, protein_sequence: str) -> Optional[torch.Tensor]:
         return self.cache.get(protein_sequence)
@@ -268,7 +269,7 @@ class ProteinProteinAffinityTrainer:
                     batch_embeddings.append(embedding)
 
             embeddings.extend([emb.to(self.device) for emb in batch_embeddings])
-
+        self.protein_cache.save('caches.pt') # allows us to download the caches and use them for model training again when we need them
         return torch.cat(embeddings)
 
     def prepare_data(self,
@@ -382,10 +383,9 @@ class ProteinProteinAffinityTrainer:
                 outputs = self.model(p1_embeddings, p2_embeddings)
 
                 # Ensure consistent dimensions
-                outputs = outputs.view(-1)  # Add this line
-                affinities = affinities.view(-1)  # Add this line
-
-                loss = criterion(outputs.squeeze(), affinities)
+                outputs = outputs.view(-1)  # Flatten outputs to 1D
+                affinities = affinities.view(-1)  # Flatten targets to 1D
+                loss = criterion(outputs, affinities)
 
                 # Backward pass
                 loss.backward()
@@ -412,11 +412,10 @@ class ProteinProteinAffinityTrainer:
 
                 outputs = self.model(p1_embeddings, p2_embeddings)
 
-                # Ensure consistent dimensions
-                outputs = outputs.view(-1)
-                affinities = affinities.view(-1)
+                outputs = outputs.view(-1)  # Flatten outputs to 1D
+                affinities = affinities.view(-1)  # Flatten targets to 1D
 
-                loss = criterion(outputs.squeeze(), affinities)
+                loss = criterion(outputs, affinities)
                 total_loss += loss.item()
 
         return total_loss / len(val_loader)
@@ -441,7 +440,7 @@ class ProteinProteinAffinityTrainer:
                 outputs = outputs.view(-1)
                 affinities = affinities.view(-1)
 
-                loss = criterion(outputs.squeeze(), affinities)
+                loss = criterion(outputs, affinities)
                 total_loss += loss.item()
 
                 predictions.extend(outputs.cpu().numpy())
@@ -621,7 +620,7 @@ def hyperparam_tune():
   # Hyperparameters to tune
       linear_dim = trial.suggest_int('linear_dim', 64, 2048, step = 64)
       num_attention_layers = trial.suggest_int('num_attention_layers', 2, 6)
-      num_heads = trial.suggest_categorical('num_heads', [2, 3, 4, 6, 8])
+      num_heads = trial.suggest_categorical('num_heads', [2, 4, 8, 16, 32])
       dropout_rate = trial.suggest_float('dropout_rate', 0, 0.25, step = 0.05)
       learning_rate = trial.suggest_categorical('learning_rate', [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 3e-4])
       batch_size = trial.suggest_int('batch_size', 1, 10)
